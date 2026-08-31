@@ -106,7 +106,56 @@ def build_distribution(groove):
     return dist
 
 
-def sample_hits(dist, rng, bars, sparse=0.0):
+def sample_hits_skeleton(dist, rng, bars, sparse=0.0):
+    """确定性骨架 + 概率薄饰 (emo 图谱: kick@0/8 主落+backbeat snare+切分后错位)。
+    每小节:
+      kick: 0 必落, 3/4 拍(8格)按概率, 后段切分(10/14)*sparse
+      snare: backbeat 4/12 必落, 切分抢拍(7/9)概率
+      hihat: 8分均匀, 反衬强化
+    奇数拍小节: 按拍数缩放到 beats*4 格, 骨架位置自适应。"""
+    drum = {part: [] for part in PARTS_USED}
+
+    for bi, (beats, bar_cells) in enumerate(bars):
+        n_slots = beats * 4
+        # 4/4 骨架格索引 → 本小节按比例缩放
+        def s16(s):  # 4/4 的16分格 → 本小节格
+            return int(round(s * beats / 4.0)) % n_slots
+
+        guitar_hits = [i for i, c in enumerate(bar_cells) if c]
+
+        # Kick: 0/8 主落 + 切分
+        kick_slots = {s16(0)}
+        for base in (s16(8),):
+            if rng.random() < 0.85 - sparse * 0.3:
+                kick_slots.add(base)
+        # 切分错位: 10/14 在 emo 图谱里后段
+        for off in (10, 14):
+            if rng.random() < 0.35 * (1.0 - sparse * 0.5):
+                kick_slots.add(s16(off))
+        # Snare: backbeat + 切分抢拍
+        snare_slots = {s16(4), s16(12)}
+        if rng.random() < 0.3 * (1.0 - sparse):
+            snare_slots.add(s16(7))
+        if rng.random() < 0.25:
+            snare_slots.add(s16(9))
+        # HiHat: 8分均匀 (每2格), 反衬空拍强化 (vel 后续加)
+        hat_slots = set(range(0, n_slots, 2))
+
+        for s in kick_slots:
+            drum["kick"].append((bi, beats, s))
+        for s in snare_slots:
+            # snare 不在 hihat 正打格才优 (避免两件同拍一起)
+            drum["snare"].append((bi, beats, s))
+        for s in hat_slots:
+            if s in guitar_hits:
+                continue  # 反衬: 吉他重拍处 hihat 弱化
+            drum["hihat"].append((bi, beats, s))
+        # 小节头 crash
+        drum["crash"].append((bi, beats, 0))
+    return drum
+
+
+def sample_hits(dist, rng, bars, sparse=0.0, mode="prob"):
     """按分布采样一顿鼓型 (16 格 × N 小节), 应用吉他重音修正。
     bars: [(beats, [cells]), ...] 每小节独立拍数 (支持奇数拍 7/8 等)。
     sparse: 0-1 留白强度, >0 整体降低命中率 (文档22节: emo 留白>复杂)。
@@ -115,6 +164,9 @@ def sample_hits(dist, rng, bars, sparse=0.0):
       - 装饰格每小节最多抽 1 次"""
     drum = {part: [] for part in PARTS_USED}
     n_bars = len(bars)
+
+    if mode == "skeleton":
+        return sample_hits_skeleton(dist, rng, bars, sparse)
 
     for bi, (beats, bar_cells) in enumerate(bars):
         guitar_hits = [i for i, c in enumerate(bar_cells) if c]
@@ -226,6 +278,8 @@ def main():
     ap.add_argument("--humanize", type=int, default=50)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--sparse", type=float, default=0.0, help="0-1 留白强度")
+    ap.add_argument("--mode", type=str, default="prob", choices=["prob", "skeleton"],
+                    help="prob=真人概率采样, skeleton=确定性emo骨架")
     args = ap.parse_args()
 
     grooves = load_grooves()
@@ -236,8 +290,8 @@ def main():
     # 小节分隔用 | (拍号里的 / 需要保留)
     bars = parse_riff(args.riff.replace("|", "\n"))
     beats = [b for b, _ in bars]
-    print(f"吉他 {len(bars)} 小节 (拍号: {beats}), bpm={args.bpm}, sparse={args.sparse}")
-    drum = sample_hits(ref["parts"], rng, bars, sparse=args.sparse)
+    print(f"吉他 {len(bars)} 小节 (拍号: {beats}), bpm={args.bpm}, sparse={args.sparse}, mode={args.mode}")
+    drum = sample_hits(ref["parts"], rng, bars, sparse=args.sparse, mode=args.mode)
     out = write_midi(drum, args.bpm, args.out, args.humanize, rng, bar_beats=beats)
     pm = pretty_midi.PrettyMIDI(out)
     print(f"生成 -> {out} ({sum(len(i.notes) for i in pm.instruments)} 音符)")
