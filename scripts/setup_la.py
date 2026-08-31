@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-setup_la.py —— LA 全集解压 + 扫描
-================================
+setup_la.py —— LA 全集解压 + 扫描 + 合并 (全自动)
+===============================================
 下载完成后运行:
   1. 解压 data/raw/la/*.zip → data/raw/la/MIDIs/ (40万 MIDI)
-  2. 运行 src/scan_library.py 内容扫描 → data/la_scan.csv
+  2. 运行 src/scan_library.py 内容扫描 → data/la_scan.csv (mido 快速版, ~11分钟)
+  3. 运行 scripts/merge_la_pool.py → data/la_pool.csv (候选池)
 
 用法: python -X utf8 scripts/setup_la.py
 """
@@ -53,6 +54,14 @@ def scan():
     subprocess.run([sys.executable, "-X", "utf8", scan_py], env=env, cwd=ROOT)
 
 
+def merge():
+    merge_py = os.path.join(ROOT, "scripts", "merge_la_pool.py")
+    print("[merge] 筛选候选池 ...")
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    subprocess.run([sys.executable, "-X", "utf8", merge_py], env=env, cwd=ROOT)
+
+
 if __name__ == "__main__":
     if not os.path.exists(ZIP):
         print("zip 不存在, 先下载（见 README / data/raw/la/）")
@@ -63,3 +72,5 @@ if __name__ == "__main__":
         sys.exit(1)
     unzip()
     scan()
+    merge()
+    print("=== LA 数据链路全部完成 ===")
