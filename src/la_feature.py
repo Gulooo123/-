@@ -58,10 +58,9 @@ def extract(path):
     for tr in mid.tracks:
         for msg in tr:
             if msg.type == "note_on" and msg.velocity > 0:
-                if msg.channel in DRUM_CH or True:
-                    if msg.channel in DRUM_CH:
-                        beat = acc2 / ppq
-                        pos16[int(round(beat * 4)) % 16] += 1
+                if msg.channel in DRUM_CH or i == 9:
+                    beat = acc2 / ppq
+                    pos16[int(round(beat * 4)) % 16] += 1
             acc2 += msg.time
     return {
         "source": "la:" + os.path.relpath(path, LA_MIDIS).replace("\\", "/"),
