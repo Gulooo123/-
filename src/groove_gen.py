@@ -63,18 +63,19 @@ def pick_reference(grooves, bpm, style=None):
     from collections import Counter
     # 关键修正: 只取 1-2 小节的"节奏型样例" (长文件=完整歌曲, 不适合做律动参考)
     cands = [g for g in grooves if g["bars"] <= 2]
-    if style == "emo":
-        emo = [g for g in cands if g["source"] in emo_style_candidates(grooves)]
-        if len(emo) >= 3:
-            cands = emo
-    elif style:
-        styled = [g for g in cands if style.lower() in g["source"].lower()]
-        if len(styled) >= 3:
-            cands = styled
-
-    # tempo 窗口: 最多选 30 首里 tempo 最接近的
-    cands.sort(key=lambda g: abs(g["tempo"] - bpm))
-    pool = cands[:30]
+    emo_c = [g for g in cands if g["source"] in emo_style_candidates(grooves)]
+    if style == "emo" and len(emo_c) >= 3:
+        # 混合池: emo 池保味 + tempo 相近通用池补律动密度 (各半)
+        cands.sort(key=lambda g: abs(g["tempo"] - bpm))
+        tempo_near = [g for g in cands if g not in emo_c][:15]
+        pool = emo_c[:15] + tempo_near
+    else:
+        if style and style != "emo":
+            styled = [g for g in cands if style.lower() in g["source"].lower()]
+            if len(styled) >= 3:
+                cands = styled
+        cands.sort(key=lambda g: abs(g["tempo"] - bpm))
+        pool = cands[:30]
 
     agg = {}
     for part in PARTS_USED:
