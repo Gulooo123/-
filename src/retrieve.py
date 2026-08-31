@@ -132,15 +132,15 @@ def retrieve(target_vec, n=8, exclude=None, prefer_beat=False, style=None,
 
 def fmt(g):
     f = g["features"]
-    parts = sorted(
-        (p for p, hits in g["parts"].items() if hits),
-        key=lambda p: -len(g["parts"][p]))
     if "parts" not in g or not any(g["parts"].values()):
-        # LA 池: 只有特征, 无 parts (解析时再补)
+        # LA 池: 只有特征, 无 parts (未完整解析)
         return (
             f"[{g['tempo']:>5.0f}bpm] dens={f['density']:.2f} sync={f['syncopation']:.2f} "
             f"| {g['source']} | (待解析)"
         )
+    parts = sorted(
+        (p for p, hits in g["parts"].items() if hits),
+        key=lambda p: -len(g["parts"][p]))
     head = " ".join(f"{p}({len(g['parts'][p])})" for p in parts[:4])
     return (
         f"[{g['tempo']:>5.0f}bpm] dens={f['density']:.2f} sync={f['syncopation']:.2f} "
