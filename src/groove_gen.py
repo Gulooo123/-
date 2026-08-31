@@ -46,12 +46,27 @@ def load_grooves(path=GROOVES):
     return json.load(open(path, encoding="utf-8"))
 
 
+# emo 味专用聚合: drummer3 rock + drummer7 pop 的真人素材 (低kick+高切分+回弹)
+EMO_POOL = None  # 懒加载
+
+
+def emo_style_candidates(grooves):
+    return [g for g in grooves
+            if ("drummer3" in g["source"] and "rock" in g["source"] and "beat" in g["source"])
+            or ("drummer7" in g["source"] and "pop" in g["source"] and "beat" in g["source"])]
+
+
 def pick_reference(grooves, bpm, style=None):
     """检索最接近的真人 groove (风格+tempo 过滤后, 聚合成 ONE 综合分布)。
-    返回 { parts: {16格概率}, tempo, n_used }。聚合比单首更稳(真人习惯是跨歌统计的)。"""
+    返回 { parts: {16格概率}, tempo, n_used }。聚合比单首更稳(真人习惯是跨歌统计的)。
+    style="emo" 时用 emo 味素材池 (低kick+切分+回弹), 其他按来源过滤。"""
     from collections import Counter
     cands = [g for g in grooves if g["bars"] <= 4]
-    if style:
+    if style == "emo":
+        emo = [g for g in cands if g["source"] in emo_style_candidates(grooves)]
+        if len(emo) >= 3:
+            cands = emo
+    elif style:
         styled = [g for g in cands if style.lower() in g["source"].lower()]
         if len(styled) >= 3:
             cands = styled
@@ -105,24 +120,29 @@ def sample_hits(dist, rng, cells):
         for part, probs in dist.items():
             if not probs:
                 continue
-            # 主格: 概率排名前 6 的格 (真人分布平缓, 不靠阈值)
+            # 主格: 概率排名前 7 的格 (真人分布平缓, 不靠阈值)
             ranked = sorted(enumerate(probs), key=lambda x: -x[1])
-            main_slots = [s for s, p in ranked[:6] if p > 0.02]
-            # 装饰格: 排名 7-12 的, 但只中等概率抽
-            decor_slots = [s for s, p in ranked[6:12] if p > 0.01]
+            main_slots = [(s, p) for s, p in ranked[:7] if p > 0.02]
+            # 装饰格: 排名 8-13
+            decor_slots = [s for s, p in ranked[7:13] if p > 0.01]
             rng.shuffle(decor_slots)
 
-            for s in main_slots:
-                # 重音修正: kick 跟随吉他重音; hihat 避开吉他正打格
+            # 主格按相对最高格的概率决定 (如 28% 最高格的 kick, 该格打 1.0,
+            # 13% 的第8格打 0.5, 逐级衰减 = 真人"主底带错位")
+            pmax = main_slots[0][1] if main_slots else 0.001
+            for s, p in main_slots:
+                hit_chance = min(1.0, p / pmax)
+                if rng.random() > hit_chance:
+                    continue
                 if part == "hihat" and s in guitar_hits:
                     continue
-                # kick 主格在吉他重音时更稳, 非重音时 0.8 保留(留白)
-                if part == "kick" and s not in guitar_hits and rng.random() < 0.2:
+                # kick: 在吉他重音处更稳, 非重音 75% 保留
+                if part == "kick" and s not in guitar_hits and rng.random() < 0.25:
                     continue
                 drum[part].append((bi, s))
-            # 装饰: 每小节最多抽 2 次 (即兴感)
-            for s in decor_slots[:2]:
-                if rng.random() < 0.40:
+            # 装饰: 每小节最多抽 1 次 (即兴感, 不喧宾夺主)
+            for s in decor_slots[:1]:
+                if rng.random() < 0.45:
                     if part == "hihat" and s in guitar_hits:
                         continue
                     drum[part].append((bi, s))
