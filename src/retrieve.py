@@ -29,6 +29,14 @@ def load():
     return json.load(open(GROOVES, encoding="utf-8"))
 
 
+def filter_style(gs, style):
+    """style 关键词过滤 (la_pool 并入后也能用)。"""
+    if not style:
+        return gs
+    kw = style.lower()
+    return [g for g in gs if kw in g["source"].lower()]
+
+
 def vec(g, tempo_norm_factor=200.0):
     f = g["features"]
     return [
@@ -45,8 +53,8 @@ def distance(a, b):
     return sum(w * (x - y) ** 2 for w, x, y in zip(FEATURE_WEIGHTS, a, b)) ** 0.5
 
 
-def retrieve(target_vec, n=8, exclude=None, prefer_beat=False):
-    gs = load()
+def retrieve(target_vec, n=8, exclude=None, prefer_beat=False, style=None):
+    gs = filter_style(load(), style)
     scored = []
     for g in gs:
         if exclude and g["source"] == exclude:
@@ -84,6 +92,7 @@ if __name__ == "__main__":
     ap.add_argument("--density", type=float, default=0.6, help="0-1 目标密度")
     ap.add_argument("--sync", type=float, default=0.5, help="0-1 目标切分强度")
     ap.add_argument("--count", type=int, default=8)
+    ap.add_argument("--style", type=str, default="", help="按风格过滤 (punk/rock/pop/halftime...)")
     ap.add_argument("--random", action="store_true", help="不看特征, 随机出几个")
     args = ap.parse_args()
 
@@ -99,6 +108,6 @@ if __name__ == "__main__":
             args.density, args.sync,
             0.15, 0.10, 0.30,
         ]
-        print(f"=== 检索 (bpm≈{args.bpm}, density={args.density}, sync={args.sync}) ===")
-        for d, g in retrieve(tv, args.count, prefer_beat=True):
+        print(f"=== 检索 (bpm≈{args.bpm}, density={args.density}, sync={args.sync}, style={args.style or 'any'}) ===")
+        for d, g in retrieve(tv, args.count, prefer_beat=True, style=args.style):
             print(f"  {d:.3f}  {fmt(g)}")
