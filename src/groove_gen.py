@@ -61,7 +61,8 @@ def pick_reference(grooves, bpm, style=None):
     返回 { parts: {16格概率}, tempo, n_used }。聚合比单首更稳(真人习惯是跨歌统计的)。
     style="emo" 时用 emo 味素材池 (低kick+切分+回弹), 其他按来源过滤。"""
     from collections import Counter
-    cands = [g for g in grooves if g["bars"] <= 4]
+    # 关键修正: 只取 1-2 小节的"节奏型样例" (长文件=完整歌曲, 不适合做律动参考)
+    cands = [g for g in grooves if g["bars"] <= 2]
     if style == "emo":
         emo = [g for g in cands if g["source"] in emo_style_candidates(grooves)]
         if len(emo) >= 3:
