@@ -213,6 +213,31 @@ def sample_hits(dist, rng, bars, sparse=0.0, mode="prob"):
     return drum
 
 
+# 真库 velocity 分布实测 (grooves.json 全库统计):
+# [中位, p10, p90] —— 每件乐器有独立动态带 (snare 重, kick/hihat 轻)
+REAL_VEL_PROFILE = {
+    "kick": [60, 34, 127],
+    "snare": [104, 29, 127],
+    "hihat": [55, 18, 104],
+    "open_hihat": [60, 23, 94],
+    "ride": [71, 40, 127],
+    "crash": [92, 43, 127],
+    "tom": [91, 49, 127],
+}
+
+
+def real_vel(part, rng):
+    """从真库分布采样 velocity (对数分布: 接近中位的多, 两端少)。"""
+    med, lo, hi = REAL_VEL_PROFILE.get(part, [80, 40, 120])
+    # 用 3 个简单随机取中位漂移,模仿真人"重击-轻触"的层次
+    r = (rng.random() + rng.random() + rng.random()) / 3.0  # 钟形 0-1
+    if r < 0.25:
+        return int(lo + rng.random() * (med - lo))
+    if r > 0.8:
+        return int(med + rng.random() * (hi - med) * 0.5)
+    return int(med + rng.random() * 25 - 12)  # 中位附近 ±12 摆动
+
+
 def write_midi(drum, bpm, out, humanize=50, rng=None, bar_beats=None):
     rng = rng or random.Random(1)
     mid = pretty_midi.PrettyMIDI(initial_tempo=bpm)
@@ -234,8 +259,10 @@ def write_midi(drum, bpm, out, humanize=50, rng=None, bar_beats=None):
             continue
         for bi, beats, slot in note_hits:
             t = (bar_start[bi] + slot / 4.0) * beat_s
-            vel = 70 + int(30 * (rng.random() + humanize / 200.0))
-            vel = min(120, max(30, vel))
+            if humanize <= 15:
+                vel = REAL_VEL_PROFILE.get(part, [80])[0]  # 低 humanize = 接近固定中位
+            else:
+                vel = real_vel(part, rng)
             track.notes.append(
                 pretty_midi.Note(velocity=vel, pitch=pitch, start=t, end=t + 0.12))
     mid.instruments.append(track)
