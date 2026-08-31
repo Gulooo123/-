@@ -106,23 +106,31 @@ def build_distribution(groove):
     return dist
 
 
-def sample_hits(dist, rng, cells, sparse=0.0):
+def sample_hits(dist, rng, bars, sparse=0.0):
     """按分布采样一顿鼓型 (16 格 × N 小节), 应用吉他重音修正。
-    cells: [[bool*16], ...] 吉他重音。
+    bars: [(beats, [cells]), ...] 每小节独立拍数 (支持奇数拍 7/8 等)。
     sparse: 0-1 留白强度, >0 整体降低命中率 (文档22节: emo 留白>复杂)。
     采样规则:
       - 主格按真人概率衰减 (28% 主格打 1.0, 弱格打 0.5)
       - 装饰格每小节最多抽 1 次"""
     drum = {part: [] for part in PARTS_USED}
-    n_bars = len(cells)
+    n_bars = len(bars)
 
-    for bi, bar_cells in enumerate(cells):
+    for bi, (beats, bar_cells) in enumerate(bars):
         guitar_hits = [i for i, c in enumerate(bar_cells) if c]
         for part, probs in dist.items():
             if not probs:
                 continue
-            # 主格: 概率排名前 7 的格 (真人分布平缓, 不靠阈值)
-            ranked = sorted(enumerate(probs), key=lambda x: -x[1])
+            # 16 格分布是 4/4 基准 (16=4拍), 奇数拍小节按拍数缩放索引
+            scale = beats / 4.0
+            # probs 索引 s(0-15) 对应 4/4 小节位置, 缩放到本小节 (beats*4 格)
+            n_slots = beats * 4
+            scaled = [0.0] * n_slots
+            for s, p in enumerate(probs):
+                scaled[int(s * scale) % n_slots] += p
+
+            # 主格: 概率排名前 7 的格
+            ranked = sorted(enumerate(scaled), key=lambda x: -x[1])
             main_slots = [(s, p) for s, p in ranked[:7] if p > 0.02]
             # 装饰格: 排名 8-13
             decor_slots = [s for s, p in ranked[7:13] if p > 0.01]
@@ -142,29 +150,37 @@ def sample_hits(dist, rng, cells, sparse=0.0):
                 # kick: 在吉他重音处更稳, 非重音 75% 保留
                 if part == "kick" and s not in guitar_hits and rng.random() < 0.25:
                     continue
-                drum[part].append((bi, s))
+                drum[part].append((bi, beats, s))
             # 装饰: 每小节最多抽 1 次 (即兴感, 不喧宾夺主), sparse 更强时更少
             for s in decor_slots[:1]:
                 if rng.random() < 0.45 * (1.0 - sparse * 0.6):
                     if part == "hihat" and s in guitar_hits:
                         continue
-                    drum[part].append((bi, s))
+                    drum[part].append((bi, beats, s))
     return drum
 
 
-def write_midi(drum, bpm, out, humanize=50, rng=None):
+def write_midi(drum, bpm, out, humanize=50, rng=None, bar_beats=None):
     rng = rng or random.Random(1)
     mid = pretty_midi.PrettyMIDI(initial_tempo=bpm)
     track = pretty_midi.Instrument(program=0, is_drum=True, name="Drums")
     beat_s = 60.0 / bpm
+    # 预计算每小节起始拍 (支持奇数拍)
+    bar_beats = bar_beats or []
+    bar_start = []
+    acc = 0.0
+    for b in bar_beats:
+        bar_start.append(acc)
+        acc += b
+
     for part, note_hits in drum.items():
         if not note_hits:
             continue
         pitch = PART_TO_PITCH.get(part)
         if pitch is None:
             continue
-        for bi, slot in note_hits:
-            t = (bi * 4 + slot / 4.0) * beat_s
+        for bi, beats, slot in note_hits:
+            t = (bar_start[bi] + slot / 4.0) * beat_s
             vel = 70 + int(30 * (rng.random() + humanize / 200.0))
             vel = min(120, max(30, vel))
             track.notes.append(
@@ -175,22 +191,28 @@ def write_midi(drum, bpm, out, humanize=50, rng=None):
     return out
 
 
-def parse_riff(riff_text):
+def parse_riff(riff_text, default_beats=4):
+    """解析吉他节奏, 返回 [(beats, [cells]), ...] 小节列表。
+    支持 7/8:xxxxxxx 前置指定拍号, 每小节独立拍数。
+    cells 是网格序列, 16 分网格密度固定 (每拍 4 格)。"""
     bars = []
     for line in riff_text.strip().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        beats = default_beats
+        if ":" in line and line.split(":")[0].replace("/", "").isdigit():
+            ts, line = line.split(":", 1)
+            beats = int(ts.split("/")[0])  # "7/8" → 7
+            line = line.strip()
         cells = [ch not in (".", " ", "—", "-") for ch in line]
-        while len(cells) < 16:
-            if len(cells) == 8:
-                d = []
-                for c in cells:
-                    d += [c, False]
-                cells = d
-                continue
+        # 目标格数 = beats * 4 (每拍 4 个16分格)
+        target = beats * 4
+        while len(cells) < target:
+            # 8 格表示 2 拍已是对半拍格, 按拍数自动扩展
             cells.append(False)
-        bars.append(cells[:16])
+        cells = cells[:target]
+        bars.append((beats, cells))
     return bars
 
 
@@ -211,10 +233,12 @@ def main():
     print(f"参考: {ref['n_used']} 首真人 groove 聚合 (tempo≈{ref['tempo']:.0f}bpm)")
 
     rng = random.Random(args.seed)
-    bars = parse_riff(args.riff.replace("/", "\n"))
-    print(f"吉他 {len(bars)} 小节, bpm={args.bpm}, sparse={args.sparse}")
+    # 小节分隔用 | (拍号里的 / 需要保留)
+    bars = parse_riff(args.riff.replace("|", "\n"))
+    beats = [b for b, _ in bars]
+    print(f"吉他 {len(bars)} 小节 (拍号: {beats}), bpm={args.bpm}, sparse={args.sparse}")
     drum = sample_hits(ref["parts"], rng, bars, sparse=args.sparse)
-    out = write_midi(drum, args.bpm, args.out, args.humanize, rng)
+    out = write_midi(drum, args.bpm, args.out, args.humanize, rng, bar_beats=beats)
     pm = pretty_midi.PrettyMIDI(out)
     print(f"生成 -> {out} ({sum(len(i.notes) for i in pm.instruments)} 音符)")
 
