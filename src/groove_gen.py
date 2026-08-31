@@ -106,12 +106,13 @@ def build_distribution(groove):
     return dist
 
 
-def sample_hits(dist, rng, cells):
+def sample_hits(dist, rng, cells, sparse=0.0):
     """按分布采样一顿鼓型 (16 格 × N 小节), 应用吉他重音修正。
     cells: [[bool*16], ...] 吉他重音。
+    sparse: 0-1 留白强度, >0 整体降低命中率 (文档22节: emo 留白>复杂)。
     采样规则:
-      - 每格 p=真实概率; 用 p>=0.15 的格为"主击"(必打), p<0.15 为"装饰"(抽签)
-      - 每小节最多打 2 次装饰, 避免全程八分噪音"""
+      - 主格按真人概率衰减 (28% 主格打 1.0, 弱格打 0.5)
+      - 装饰格每小节最多抽 1 次"""
     drum = {part: [] for part in PARTS_USED}
     n_bars = len(cells)
 
@@ -132,6 +133,8 @@ def sample_hits(dist, rng, cells):
             pmax = main_slots[0][1] if main_slots else 0.001
             for s, p in main_slots:
                 hit_chance = min(1.0, p / pmax)
+                # 留白: 整体衰减 (sparse=1 时非主格约 50% 概率不打)
+                hit_chance *= (1.0 - sparse * 0.5)
                 if rng.random() > hit_chance:
                     continue
                 if part == "hihat" and s in guitar_hits:
@@ -140,9 +143,9 @@ def sample_hits(dist, rng, cells):
                 if part == "kick" and s not in guitar_hits and rng.random() < 0.25:
                     continue
                 drum[part].append((bi, s))
-            # 装饰: 每小节最多抽 1 次 (即兴感, 不喧宾夺主)
+            # 装饰: 每小节最多抽 1 次 (即兴感, 不喧宾夺主), sparse 更强时更少
             for s in decor_slots[:1]:
-                if rng.random() < 0.45:
+                if rng.random() < 0.45 * (1.0 - sparse * 0.6):
                     if part == "hihat" and s in guitar_hits:
                         continue
                     drum[part].append((bi, s))
@@ -200,6 +203,7 @@ def main():
     ap.add_argument("--out", type=str, default=os.path.join(ROOT, "data", "gen", "live_drum.mid"))
     ap.add_argument("--humanize", type=int, default=50)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--sparse", type=float, default=0.0, help="0-1 留白强度")
     args = ap.parse_args()
 
     grooves = load_grooves()
@@ -208,8 +212,8 @@ def main():
 
     rng = random.Random(args.seed)
     bars = parse_riff(args.riff.replace("/", "\n"))
-    print(f"吉他 {len(bars)} 小节, bpm={args.bpm}")
-    drum = sample_hits(ref["parts"], rng, bars)
+    print(f"吉他 {len(bars)} 小节, bpm={args.bpm}, sparse={args.sparse}")
+    drum = sample_hits(ref["parts"], rng, bars, sparse=args.sparse)
     out = write_midi(drum, args.bpm, args.out, args.humanize, rng)
     pm = pretty_midi.PrettyMIDI(out)
     print(f"生成 -> {out} ({sum(len(i.notes) for i in pm.instruments)} 音符)")
