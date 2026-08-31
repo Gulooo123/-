@@ -1,106 +1,103 @@
 # -*- coding: utf-8 -*-
 """
-scan_library.py —— 全量 MIDI 内容扫描器
-====================================
-40万 MIDI 无风格标签, 只能按内容特征筛。本脚本解析每个文件并产出轻量筛选结果,
-目标是捞"摇滚架构"的曲子: 有鼓轨 + 4/4 + 可用 BPM 区间 + 鼓轨音符量合理。
+scan_library.py —— LA 全集快速扫描器 (mido 版)
+===========================================
+只提取: 有无鼓轨 / tempo / 鼓轨音符数 / 总小节估计。
+不要完整特征——LA 只是候选池预筛, 选中的进完整解析。
 
-输出: data/scan_result.csv (每行一首: 路径/hash/tempo/拍号/鼓存在/鼓轨数量/各声部密度)
+速度: mido 底层解析, 40万首约 10-15 分钟。
 
-用法: python -X utf8 src/scan_library.py [--limit 200000] [--dump CSV]
+输出: data/la_scan.csv
 """
-import argparse
 import csv
 import os
 import sys
+import time
 
-import pretty_midi
+import mido
 
-LA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "data", "raw", "la", "MIDIs")
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "data", "la_scan.csv")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LA_DIR = os.path.join(ROOT, "data", "raw", "la", "MIDIs")
+OUT = os.path.join(ROOT, "data", "la_scan.csv")
 
-# GM 鼓键位 (Kick/Snare/HiHat/Tom/Ride/Crash)
-DRUM_PITCHES = {36, 35, 38, 40, 37, 42, 44, 46, 51, 59, 53, 49, 57, 55,
-                41, 43, 45, 47, 48, 50}
+# 鼓音高 (GM 标准)
+DRUM_PITCHES = {36, 35, 38, 40, 42, 44, 46, 51, 59, 49, 57, 41, 43, 45, 47, 48, 50}
 
 
 def scan_one(path):
-    """返回 (row, notes_info) 元组, row 是 CSV 行, 无鼓轨可返回 (None, None)。"""
+    """返回 tuple 行或 None。"""
     try:
-        pm = pretty_midi.PrettyMIDI(path)
+        mid = mido.MidiFile(path, clip=True)
     except Exception:
-        return None, None
-    try:
-        tempo_changes = pm.get_tempo_changes()
-        tempo = tempo_changes[1][0] if len(tempo_changes[1]) else 0.0
-    except Exception:
-        return None, None
+        return None
+    if mid.type != 1 and mid.type != 0:
+        return None
+    tempo = 120.0
+    drum_notes = 0
+    total_notes = 0
+    last_beat = 0.0  # 用最后一个鼓 note 的绝对拍数估计时长
+    drum_present = False
+    is_drum_ch = {9}  # 默认 10 号通道为鼓
+    ppq = mid.ticks_per_beat or 480
+    abs_ticks = 0.0
+    for i, tr in enumerate(mid.tracks):
+        ch_is_drum = (i == 9)
+        for msg in tr:
+            if msg.type == 'set_tempo':
+                # msg.tempo = 每拍微秒 (mido), bpm = 60 / (us/1e6)
+                tempo = 60.0 / (msg.tempo / 1e6)
+            if msg.type == 'note_on' and msg.velocity > 0:
+                total_notes += 1
+                if msg.channel in is_drum_ch or ch_is_drum:
+                    drum_notes += 1
+                    drum_present = True
+                    last_beat = max(last_beat, abs_ticks / ppq)
+            abs_ticks += msg.time
+    if not drum_present or drum_notes == 0 or last_beat < 1:
+        return None
     if not (30 <= tempo <= 300):
-        return None, None
-
-    drum_ins = [i for i in pm.instruments if i.is_drum]
-    if not drum_ins:
-        return None, None
-
-    drum_notes = sum(len(i.notes) for i in drum_ins)
-    if drum_notes == 0:
-        return None, None
-
-    total_notes = sum(len(i.notes) for i in pm.instruments)
-    n_bars = max(
-        (int(n.end // (4 * 60.0 / tempo)) for i in drum_ins for n in i.notes),
-        default=-1)
-    n_bars += 1
-    # 密度: 每小节鼓音符数 (0-256)
-    density = min(999, drum_notes / max(1, n_bars))
-
+        return None
+    # 每小节鼓音符数 (密度指标, 应对长短文件的公平性)
+    n_bars = max(1, int(last_beat / 4) + 1)
+    density = drum_notes / n_bars
     row = {
-        "path": os.path.relpath(path, os.path.dirname(LA_DIR)).replace("\\", "/"),
+        "path": os.path.relpath(path, LA_DIR).replace("\\", "/"),
         "tempo": round(tempo, 1),
-        "n_bars": n_bars,
         "drum_notes": drum_notes,
-        "density_per_bar": round(density, 2),
         "total_notes": total_notes,
+        "n_bars": n_bars,
+        "density_per_bar": round(density, 2),
     }
-    return row, None
+    return row
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=0, help="0=全部")
-    ap.add_argument("--dump", type=str, default=OUT)
-    args = ap.parse_args()
-
+def main(limit=0, out=OUT):
     files = []
     for root, _, names in os.walk(LA_DIR):
         for n in names:
             if n.endswith(".mid") or n.endswith(".midi"):
                 files.append(os.path.join(root, n))
     files.sort()
-    if args.limit:
-        files = files[: args.limit]
-    print(f"扫描 {len(files)} 个文件 ...")
-
+    if limit:
+        files = files[:limit]
+    print(f"扫描 {len(files)} 个文件 (mido 快速版) ...")
+    t0 = time.time()
     rows = []
-    errs = 0
     for i, f in enumerate(files):
-        if i % 5000 == 0:
-            print(f"  {i}/{len(files)} (+{len(rows)} 合格)")
-        r, _ = scan_one(f)
+        if i % 20000 == 0:
+            el = time.time() - t0
+            print(f"  {i}/{len(files)}  (+{len(rows)} 合格) {el:.0f}s")
+        r = scan_one(f)
         if r:
             rows.append(r)
-        else:
-            errs += 1
-
     if rows:
-        with open(args.dump, "w", newline="", encoding="utf-8") as fp:
+        with open(out, "w", newline="", encoding="utf-8") as fp:
             w = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
             w.writeheader()
             w.writerows(rows)
-    print(f"完成: 合格 {len(rows)} 个, 跳过 {errs} 个 -> {args.dump}")
+    print(f"完成: 合格 {len(rows)}, 用时 {time.time()-t0:.0f}s -> {out}")
 
 
 if __name__ == "__main__":
-    main()
+    limit = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+    main(limit=limit)
