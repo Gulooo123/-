@@ -34,14 +34,19 @@ def unzip():
     print(f"[unzip] 解压 {ZIP} ... (约 5-15 分钟, 40万小文件)")
     t0 = time.time()
     z = zipfile.ZipFile(ZIP)
+    ok = bad = 0
     for m in z.infolist():
-        # 只解我们需要的顶层目录 (跳过 Artwork/SOUNDFONT/CHORDS 等)
-        top = m.filename.split("/", 1)[0]
-        for target in TARGET_DIRS:
-            if m.filename.startswith(target):
-                z.extract(m, LA)
-                break
-    print(f"[unzip] 完成, 用时 {time.time()-t0:.0f}s")
+        # 只解 MIDIs/ (CHORDS_DATA 等有损坏流且我们不需要)
+        if not m.filename.startswith("MIDIs/"):
+            continue
+        try:
+            z.extract(m, LA)
+            ok += 1
+        except Exception as e:
+            bad += 1
+            if bad <= 3:
+                print(f"  [skip] {m.filename[:50]} -> {str(e)[:50]}")
+    print(f"[unzip] 完成 ok={ok} 跳过={bad}, 用时 {time.time()-t0:.0f}s")
     n = sum(1 for _, _, fs in os.walk(MIDIS_DIR) for _ in fs)
     print(f"  MIDIs: {n} 文件")
 
