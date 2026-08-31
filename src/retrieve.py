@@ -38,9 +38,14 @@ _la_cache = None
 
 
 def load_la():
-    """LA 池: CSV 行 → 简易 groove dict (无 parts, 只有特征)。"""
+    """LA 池: 优先 la_features.json (完整解析), 无则 la_pool.csv (粗筛)。"""
     global _la_cache
     if _la_cache is not None:
+        return _la_cache
+    la_feat = os.path.join(os.path.dirname(GROOVES), "la_features.json")
+    if os.path.exists(la_feat):
+        _la_cache = json.load(open(la_feat, encoding="utf-8"))
+        print(f"[la] 用完整特征 {len(_la_cache)} 首")
         return _la_cache
     if not os.path.exists(LA_CSV):
         _la_cache = []
@@ -54,10 +59,8 @@ def load_la():
         except (ValueError, KeyError):
             continue
         # 校准: GMD 每小节鼓音符中位 15.1 ≈ density 0.95
-        # LA: 15→0.95; 20→1.0(饱和); 10→0.7(稀)
         gmd_per_bar_med = 15.0
         density = min(1.0, dens / gmd_per_bar_med) * 0.95
-        # LA 鼓轨多偏"编曲型"而非"律动型", 密度过高视为非真人律动, 上限压到 0.85
         density = min(density, 0.85)
         out.append({
             "source": "la:" + r["path"].replace("\\", "/"),
