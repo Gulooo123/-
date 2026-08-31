@@ -52,5 +52,6 @@ python scripts/download_gmd.py
 
 - [x] 第 0 步：GMD 下载 + 解压 + emo 候选池
 - [x] 第 1 步：MIDI 解析 → 切 groove → 结构化表示（JSON 特征库） `src/groove.py` → `data/grooves.json`（448 条）
-- [ ] 第 2 步：按特征（BPM/density/syncopation/velocity）检索相似 groove
+- [x] 第 2 步：按特征（BPM/density/syncopation/velocity）检索相似 groove `src/retrieve.py`（beat优先）
+- [x] 第 3 步：吉他节奏→鼓 MIDI 生成 `src/generate.py`（backbeat+重音跟随+hihat律动+velocity抖动）
 - [ ] 第 3 步：接 LLM 分析吉他 riff → 生成候选 → 输出 .mid
