@@ -50,13 +50,17 @@ def load_la():
     for r in rows:
         try:
             tempo = float(r["tempo"])
-            dens = float(r["density_per_bar"]) / 100.0  # 38/16=0.38 量纲对齐 grooves.json (0-1)
+            dens = float(r["density_per_bar"])  # 每小节鼓音符数 (10-70)
         except (ValueError, KeyError):
             continue
+        # 校准: GMD 每小节鼓音符中位 15.1 ≈ density 1.0 (GMD中点密度)
+        # LA 每小节 15 → density≈0.95; 10→0.75; 30→0.95(封顶); 70→1.0
+        gmd_per_bar_med = 15.0
+        density = min(1.0, dens / gmd_per_bar_med * 0.95)
         out.append({
             "source": "la:" + r["path"].replace("\\", "/"),
             "tempo": tempo,
-            "features": {"density": min(1.0, dens * 0.55),  # 缩放因子: 实测可调
+            "features": {"density": round(density, 3),
                          "syncopation": 0.5,   # LA 无切分特征, 取中性 0.5
                          "kick_density": 0.15,
                          "snare_density": 0.30,
