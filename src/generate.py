@@ -51,7 +51,7 @@ NOTETOM = [NOTE_TOM_MID, NOTE_TOM_LOW, 47]  # 47=Tom mid2
 
 
 def humanize_vel(vel, level, rng, max_jit=15):
-    """humanize level 0-100 → velocity 抖动量 (文档: ±5~15)。"""
+    """humanize level 0-100 → velocity 抖动量 (文档21节: 0%量化→100%极端, ±5~15)。"""
     jit = max_jit * (level / 100.0)
     return max(1, min(127, int(vel + rng.randint(-int(jit), int(jit)))))
 
