@@ -16,3 +16,6 @@ venv/
 *.html
 *.ipynb
 *.bin
+
+# 生成结果不入库
+data/gen/
